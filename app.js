@@ -58,7 +58,7 @@ async function fetchTurnCredentials() {
     }
     try {
         const resp = await fetch(
-            `https://quickcall.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`
+            `https://chat0.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`
         );
         if (!resp.ok) throw new Error("HTTP " + resp.status);
         const turnServers = await resp.json();
