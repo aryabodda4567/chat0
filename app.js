@@ -24,6 +24,8 @@ const camBtn = document.getElementById('cam-btn');
 const switchCamBtn = document.getElementById('switch-cam-btn');
 const endBtn = document.getElementById('end-btn');
 const videosContainer = document.getElementById('videos-container');
+const enableCamBtn = document.getElementById('enable-cam-btn');
+const cameraHint = document.getElementById('camera-hint');
 
 // ========== STATE ==========
 let peer = null;
@@ -211,8 +213,8 @@ function initPeer() {
             shareSection.classList.remove('hidden');
             setStatus('connected', 'Ready — share the link to start');
 
-            // Pre-start local video
-            getLocalStream().then(() => { }).catch(() => { });
+            // Do NOT auto-start camera — mobile browsers need a user gesture
+            // The 'Enable Camera' button handles this
         } else {
             setStatus('connected', 'Ready to join');
         }
@@ -221,12 +223,10 @@ function initPeer() {
     // Host: receive incoming call
     peer.on('call', async (call) => {
         try {
-            // Re-acquire stream to ensure it's fresh
-            if (localStream) {
-                localStream.getTracks().forEach(track => track.stop());
-                localStream = null;
+            // Use existing stream if camera was already enabled, otherwise acquire
+            if (!localStream) {
+                await getLocalStream();
             }
-            await getLocalStream();
             call.answer(localStream);
             handleCall(call);
             showScreen(callScreen);
@@ -273,6 +273,22 @@ joinBtn.addEventListener('click', async () => {
         joinBtn.disabled = false;
         joinBtn.textContent = 'Join Call';
         setStatus('error', 'Failed to join — check permissions');
+    }
+});
+
+// ========== ENABLE CAMERA (user gesture for mobile) ==========
+enableCamBtn.addEventListener('click', async () => {
+    try {
+        enableCamBtn.textContent = 'Starting…';
+        enableCamBtn.disabled = true;
+        await getLocalStream();
+        enableCamBtn.innerHTML = '✓ Camera Ready';
+        enableCamBtn.classList.add('camera-ready');
+        cameraHint.textContent = 'Camera is ready. Waiting for someone to join…';
+    } catch (err) {
+        enableCamBtn.textContent = 'Retry Enable Camera';
+        enableCamBtn.disabled = false;
+        console.error('Failed to enable camera:', err);
     }
 });
 
