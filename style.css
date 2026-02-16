@@ -314,6 +314,7 @@ body {
 #call-screen {
     flex-direction: column;
     background: #000;
+    position: relative;
 }
 
 #call-screen.active {
@@ -325,6 +326,7 @@ body {
     display: flex;
     position: relative;
     width: 100%;
+    min-height: 0;
     overflow: hidden;
 }
 
@@ -399,6 +401,7 @@ body {
     justify-content: center;
     gap: 16px;
     padding: 20px;
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
     background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, transparent 100%);
     position: absolute;
     bottom: 0;
@@ -420,6 +423,9 @@ body {
     background: rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(12px);
     color: #fff;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
 }
