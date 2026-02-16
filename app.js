@@ -40,7 +40,7 @@ let currentFacingMode = "user";
 // ========== TURN SERVERS (Metered.ca free tier) ==========
 // Sign up free at https://dashboard.metered.ca  →  Create App  →  Copy API Key
 // Free tier = 500 GB/month — more than enough for personal use.
-const METERED_API_KEY = "qZz7zQ2Hd_Db_roaEJedJT8u6Z3Miv776AZvIhccXc0kEIHl"; // ← PASTE YOUR API KEY HERE
+const METERED_API_KEY = "6701af57165c5eeb4b76493fe8f9666112e5";
 
 // Fallback: STUN-only (works on WiFi, fails on mobile carriers)
 let iceConfig = {
