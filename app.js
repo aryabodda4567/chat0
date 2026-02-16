@@ -126,7 +126,7 @@ function handleCall(call) {
     call.on('stream', (remoteStream) => {
         remoteVideo.srcObject = remoteStream;
         remoteLabel.textContent = 'Connected';
-        // Ensure video plays (autoplay policy)
+        // Force play for autoplay-blocked browsers
         remoteVideo.play().catch(() => { });
     });
 
@@ -138,6 +138,35 @@ function handleCall(call) {
         console.error('Call error:', err);
         endCall(false);
     });
+
+    // Monitor the underlying peer connection for late-arriving tracks
+    const pc = call.peerConnection;
+    if (pc) {
+        pc.ontrack = (event) => {
+            if (event.streams && event.streams[0]) {
+                remoteVideo.srcObject = event.streams[0];
+            } else {
+                // No stream associated — create one from tracks
+                let stream = remoteVideo.srcObject;
+                if (!stream || !(stream instanceof MediaStream)) {
+                    stream = new MediaStream();
+                    remoteVideo.srcObject = stream;
+                }
+                stream.addTrack(event.track);
+            }
+            remoteVideo.play().catch(() => { });
+            remoteLabel.textContent = 'Connected';
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            console.log('ICE state:', pc.iceConnectionState);
+            if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+                remoteLabel.textContent = 'Connection lost…';
+            } else if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                remoteLabel.textContent = 'Connected';
+            }
+        };
+    }
 }
 
 function switchToCallScreen() {
