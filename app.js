@@ -43,12 +43,32 @@ let currentFacingMode = "user";
 const METERED_API_KEY = "6701af57165c5eeb4b76493fe8f9666112e5";
 
 // Fallback: STUN-only (works on WiFi, fails on mobile carriers)
+// let iceConfig = {
+//     iceServers: [
+//         { urls: "stun:stun.l.google.com:19302" },
+//         { urls: "stun:stun1.l.google.com:19302" }
+//     ]
+// };
+
+// ========== ICE SERVERS (Cloudflare TURN) ==========
 let iceConfig = {
     iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" }
+        {
+            urls: "stun:stun.cloudflare.com:3478"
+        },
+        {
+            urls: [
+                "turn:turn.cloudflare.com:3478?transport=udp",
+                "turn:turn.cloudflare.com:3478?transport=tcp",
+                "turns:turn.cloudflare.com:5349?transport=tcp"
+            ],
+            username: "g0c89e5f501c3c87e9dc50001e66a803e041bf0fb621494258d5cebe3a0965b4",
+            credential: "7849f5d3084d820c77dc60a82d8f87c2917e54c085550cb03f4580e1cf391682"
+        }
     ]
 };
+
+
 
 // Fetch real TURN credentials from Metered.ca
 async function fetchTurnCredentials() {
@@ -293,7 +313,7 @@ function initPeer() {
 
 // ========== BOOT ==========
 async function boot() {
-    await fetchTurnCredentials();
+    // await fetchTurnCredentials();
     initPeer();
 }
 
