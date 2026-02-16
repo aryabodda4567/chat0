@@ -37,19 +37,42 @@ let roomId = null;
 let isHost = false;
 let currentFacingMode = "user";
 
-// ========== ICE SERVERS ==========
-// Multiple free STUN servers for reliability.
-// No TURN — free public TURN servers with fixed credentials don't exist
-// anymore. For production, use metered.ca or Twilio TURN with real API keys.
-const ICE_SERVERS = {
+// ========== TURN SERVERS (Metered.ca free tier) ==========
+// Sign up free at https://dashboard.metered.ca  →  Create App  →  Copy API Key
+// Free tier = 500 GB/month — more than enough for personal use.
+const METERED_API_KEY = "qZz7zQ2Hd_Db_roaEJedJT8u6Z3Miv776AZvIhccXc0kEIHl"; // ← PASTE YOUR API KEY HERE
+
+// Fallback: STUN-only (works on WiFi, fails on mobile carriers)
+let iceConfig = {
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
-        { urls: "stun:stun3.l.google.com:19302" },
-        { urls: "stun:stun4.l.google.com:19302" }
+        { urls: "stun:stun1.l.google.com:19302" }
     ]
 };
+
+// Fetch real TURN credentials from Metered.ca
+async function fetchTurnCredentials() {
+    if (!METERED_API_KEY) {
+        console.warn("No METERED_API_KEY set — STUN only. Mobile-to-mobile may fail.");
+        return;
+    }
+    try {
+        const resp = await fetch(
+            `https://quickcall.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`
+        );
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        const turnServers = await resp.json();
+        iceConfig = {
+            iceServers: [
+                { urls: "stun:stun.l.google.com:19302" },
+                ...turnServers
+            ]
+        };
+        console.log("TURN credentials loaded:", turnServers.length, "servers");
+    } catch (e) {
+        console.error("Failed to fetch TURN credentials:", e);
+    }
+}
 
 // ========== UTILITIES ==========
 function generateRoomId() {
@@ -212,11 +235,11 @@ function initPeer() {
         roomId = urlRoom;
         joinSection.classList.remove("hidden");
         setStatus("connecting", "Connecting…");
-        peer = new Peer(undefined, { config: ICE_SERVERS });
+        peer = new Peer(undefined, { config: iceConfig });
     } else {
         isHost = true;
         roomId = generateRoomId();
-        peer = new Peer(roomId, { config: ICE_SERVERS });
+        peer = new Peer(roomId, { config: iceConfig });
     }
 
     peer.on("open", (id) => {
@@ -266,6 +289,12 @@ function initPeer() {
             peer.reconnect();
         }
     });
+}
+
+// ========== BOOT ==========
+async function boot() {
+    await fetchTurnCredentials();
+    initPeer();
 }
 
 // ========== JOIN ==========
@@ -376,4 +405,4 @@ switchCamBtn.addEventListener("click", async () => {
 });
 
 // ========== INIT ==========
-initPeer();
+boot();
