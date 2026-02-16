@@ -24,6 +24,8 @@ const remoteLabel = document.getElementById('remote-label');
 const micBtn = document.getElementById('mic-btn');
 const camBtn = document.getElementById('cam-btn');
 const endBtn = document.getElementById('end-btn');
+const upgradeBtn = document.getElementById('upgrade-btn');
+const videosContainer = document.getElementById('videos-container');
 
 // ========== STATE ==========
 let peer = null;
@@ -31,6 +33,7 @@ let localStream = null;
 let currentCall = null;
 let roomId = null;
 let isHost = false;
+let callMode = 'video'; // 'video' or 'voice'
 
 // ========== ICE SERVERS (STUN + TURN) ==========
 const ICE_SERVERS = {
@@ -83,27 +86,35 @@ function setStatus(type, text) {
 
 // ========== MEDIA ==========
 async function getLocalStream() {
+    const constraints = {
+        audio: true,
+        video: callMode === 'video'
+    };
     try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true
-        });
+        localStream = await navigator.mediaDevices.getUserMedia(constraints);
         localVideo.srcObject = localStream;
+        if (callMode === 'voice') {
+            camBtn.classList.remove('active');
+        }
         return localStream;
     } catch (err) {
-        // Try audio only
-        try {
-            localStream = await navigator.mediaDevices.getUserMedia({
-                video: false,
-                audio: true
-            });
-            localVideo.srcObject = localStream;
-            camBtn.classList.remove('active');
-            return localStream;
-        } catch (audioErr) {
-            console.error('Cannot access media devices:', audioErr);
-            setStatus('error', 'Camera/Mic access denied');
-            throw audioErr;
+        if (callMode === 'video') {
+            // Fallback to audio only
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+                localVideo.srcObject = localStream;
+                callMode = 'voice';
+                camBtn.classList.remove('active');
+                return localStream;
+            } catch (audioErr) {
+                console.error('Cannot access media devices:', audioErr);
+                setStatus('error', 'Camera/Mic access denied');
+                throw audioErr;
+            }
+        } else {
+            console.error('Cannot access microphone:', err);
+            setStatus('error', 'Microphone access denied');
+            throw err;
         }
     }
 }
@@ -130,6 +141,23 @@ function handleCall(call) {
 function switchToCallScreen() {
     lobby.classList.remove('active');
     callScreen.classList.add('active');
+    updateCallScreenMode();
+}
+
+function updateCallScreenMode() {
+    if (callMode === 'voice') {
+        videosContainer.classList.add('voice-only-mode');
+        camBtn.classList.add('hidden');
+        upgradeBtn.classList.remove('hidden');
+        upgradeBtn.classList.remove('downgrade-active');
+        upgradeBtn.title = 'Upgrade to Video';
+    } else {
+        videosContainer.classList.remove('voice-only-mode');
+        camBtn.classList.remove('hidden');
+        upgradeBtn.classList.remove('hidden');
+        upgradeBtn.classList.add('downgrade-active');
+        upgradeBtn.title = 'Switch to Voice Only';
+    }
 }
 
 function endCall(closePeer = true) {
@@ -294,6 +322,69 @@ camBtn.addEventListener('click', () => {
 
 endBtn.addEventListener('click', () => {
     endCall(true);
+});
+
+// ========== CALL TYPE PICKER ==========
+document.querySelectorAll('.call-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const parent = btn.closest('.call-type-btns');
+        parent.querySelectorAll('.call-type-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        callMode = btn.dataset.mode;
+    });
+});
+
+// ========== UPGRADE / DOWNGRADE VIDEO ==========
+upgradeBtn.addEventListener('click', async () => {
+    if (!localStream || !currentCall) return;
+
+    const peerConnection = currentCall.peerConnection;
+    if (!peerConnection) return;
+
+    if (callMode === 'voice') {
+        // Upgrade to video
+        try {
+            const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const videoTrack = videoStream.getVideoTracks()[0];
+            localStream.addTrack(videoTrack);
+            localVideo.srcObject = localStream;
+
+            // Add or replace video track in the peer connection
+            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+                await sender.replaceTrack(videoTrack);
+            } else {
+                peerConnection.addTrack(videoTrack, localStream);
+            }
+
+            callMode = 'video';
+            camBtn.classList.add('active');
+            updateCallScreenMode();
+        } catch (err) {
+            console.error('Failed to upgrade to video:', err);
+        }
+    } else {
+        // Downgrade to voice
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.stop();
+            localStream.removeTrack(videoTrack);
+
+            // Remove video track from peer connection
+            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+                try {
+                    await sender.replaceTrack(null);
+                } catch {
+                    peerConnection.removeTrack(sender);
+                }
+            }
+        }
+
+        callMode = 'voice';
+        camBtn.classList.remove('active');
+        updateCallScreenMode();
+    }
 });
 
 // ========== DRAGGABLE LOCAL VIDEO ==========
