@@ -126,6 +126,8 @@ function handleCall(call) {
     call.on('stream', (remoteStream) => {
         remoteVideo.srcObject = remoteStream;
         remoteLabel.textContent = 'Connected';
+        // Ensure video plays (autoplay policy)
+        remoteVideo.play().catch(() => { });
     });
 
     call.on('close', () => {
@@ -230,9 +232,12 @@ function initPeer() {
     // Host: receive incoming call
     peer.on('call', async (call) => {
         try {
-            if (!localStream) {
-                await getLocalStream();
+            // Always re-acquire stream to match current callMode selection
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
             }
+            await getLocalStream();
             call.answer(localStream);
             handleCall(call);
             switchToCallScreen();

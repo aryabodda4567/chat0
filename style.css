@@ -309,10 +309,6 @@ body {
     background: linear-gradient(135deg, #111 0%, #1a1a2e 100%);
 }
 
-.voice-only-mode .remote-wrapper video {
-    display: none;
-}
-
 .voice-only-mode .remote-wrapper .video-label {
     position: static;
     font-size: 1.1rem;
