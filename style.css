@@ -313,8 +313,14 @@ body {
 /* ========== CALL SCREEN ========== */
 #call-screen {
     flex-direction: column;
-    background: #000;
+    align-items: center;
+    justify-content: center;
+    background:
+        radial-gradient(ellipse at 30% 20%, rgba(108, 99, 255, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 70% 80%, rgba(72, 229, 194, 0.04) 0%, transparent 50%),
+        #0b0e17;
     position: relative;
+    padding: 24px;
 }
 
 #call-screen.active {
@@ -326,8 +332,16 @@ body {
     display: flex;
     position: relative;
     width: 100%;
+    max-width: 1200px;
     min-height: 0;
     overflow: hidden;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.3),
+        0 20px 60px rgba(0, 0, 0, 0.5),
+        0 0 40px rgba(108, 99, 255, 0.08);
+    background: #111;
 }
 
 .video-wrapper {
@@ -355,6 +369,7 @@ body {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    border-radius: 20px;
 }
 
 .local-wrapper {
@@ -368,11 +383,13 @@ body {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     z-index: 10;
     cursor: grab;
-    transition: box-shadow 0.2s;
+    transition: all 0.3s ease;
+    background: #111;
 }
 
 .local-wrapper:hover {
     box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7);
+    border-color: rgba(108, 99, 255, 0.3);
 }
 
 .local-wrapper video {
@@ -386,6 +403,7 @@ body {
     left: 12px;
     background: rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     padding: 4px 12px;
     border-radius: 100px;
     font-size: 0.75rem;
@@ -488,11 +506,33 @@ body {
         font-size: 1.4rem;
     }
 
+    /* Full-bleed video on mobile */
+    #call-screen {
+        padding: 0;
+        background: #000;
+    }
+
+    .videos-container {
+        border-radius: 0;
+        border: none;
+        box-shadow: none;
+        max-width: 100%;
+    }
+
+    .remote-wrapper video {
+        border-radius: 0;
+    }
+
     .local-wrapper {
-        width: 140px;
-        height: 105px;
+        width: 120px;
+        height: 90px;
         bottom: 90px;
         right: 12px;
+        border-radius: 12px;
+    }
+
+    .local-wrapper video {
+        border-radius: 10px;
     }
 
     .control-btn {
