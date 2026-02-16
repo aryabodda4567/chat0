@@ -111,41 +111,26 @@ async function getLocalStream() {
     return localStream;
 }
 
-// ========== PLAY REMOTE VIDEO (handles autoplay policy) ==========
-async function playRemoteVideo() {
-    try {
-        await remoteVideo.play();
-    } catch (e) {
-        console.warn("Remote autoplay blocked — adding tap-to-play overlay");
-        // On iOS Safari, autoplay with audio requires user gesture.
-        // Show a tap overlay so the user can start playback.
-        let overlay = document.getElementById("tap-overlay");
-        if (!overlay) {
-            overlay = document.createElement("div");
-            overlay.id = "tap-overlay";
-            overlay.style.cssText =
-                "position:absolute;inset:0;z-index:5;display:flex;align-items:center;" +
-                "justify-content:center;background:rgba(0,0,0,0.6);cursor:pointer;";
-            overlay.innerHTML =
-                '<span style="color:#fff;font-size:1.2rem;padding:16px 28px;' +
-                'background:rgba(108,99,255,0.8);border-radius:12px;">Tap to hear audio</span>';
-            overlay.addEventListener("click", async () => {
-                try { await remoteVideo.play(); } catch (_) { /* noop */ }
-                overlay.remove();
-            }, { once: true });
-            document.getElementById("remote-video-wrapper").appendChild(overlay);
-        }
-    }
-}
-
 // ========== CALL HANDLING ==========
 function handleCall(call) {
     currentCall = call;
 
     call.on("stream", async (remoteStream) => {
         console.log("Remote stream received, tracks:", remoteStream.getTracks().map(t => t.kind + ":" + t.readyState));
+
         remoteVideo.srcObject = remoteStream;
-        await playRemoteVideo();
+
+        // iOS Safari blocks autoplay of videos with audio.
+        // Fix: start muted (always allowed), play, then unmute.
+        remoteVideo.muted = true;
+        try {
+            await remoteVideo.play();
+        } catch (e) {
+            console.warn("play() failed even muted:", e);
+        }
+        // Unmute after playback has started
+        remoteVideo.muted = false;
+
         remoteLabel.textContent = "Connected";
     });
 
@@ -167,7 +152,6 @@ function handleCall(call) {
             if (event.streams && event.streams[0]) {
                 remoteVideo.srcObject = event.streams[0];
             } else {
-                // No associated stream — build one
                 let stream = remoteVideo.srcObject;
                 if (!stream || !(stream instanceof MediaStream)) {
                     stream = new MediaStream();
@@ -175,7 +159,9 @@ function handleCall(call) {
                 }
                 stream.addTrack(event.track);
             }
-            playRemoteVideo();
+            // Same muted→play→unmute trick
+            remoteVideo.muted = true;
+            remoteVideo.play().then(() => { remoteVideo.muted = false; }).catch(() => { });
             remoteLabel.textContent = "Connected";
         };
 
