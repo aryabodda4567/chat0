@@ -38,26 +38,16 @@ let isHost = false;
 let currentFacingMode = "user";
 
 // ========== ICE SERVERS ==========
+// Multiple free STUN servers for reliability.
+// No TURN — free public TURN servers with fixed credentials don't exist
+// anymore. For production, use metered.ca or Twilio TURN with real API keys.
 const ICE_SERVERS = {
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
-
-        { urls: "stun:stun.relay.metered.ca:80" },
-        {
-            urls: "turn:global.relay.metered.ca:80",
-            username: "openrelayproject",
-            credential: "openrelayproject"
-        },
-        {
-            urls: "turn:global.relay.metered.ca:443",
-            username: "openrelayproject",
-            credential: "openrelayproject"
-        },
-        {
-            urls: "turn:global.relay.metered.ca:443?transport=tcp",
-            username: "openrelayproject",
-            credential: "openrelayproject"
-        }
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" }
     ]
 };
 
@@ -91,22 +81,61 @@ function showScreen(screen) {
 
 // ========== MEDIA ==========
 async function getLocalStream() {
+    // First try with preferred facing mode
     try {
         localStream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: currentFacingMode },
             audio: true
         });
-    } catch {
-        localStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true
-        });
+    } catch (e1) {
+        console.warn("facingMode failed, trying without:", e1.name);
+        // Fallback: no facingMode constraint
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true
+            });
+        } catch (e2) {
+            console.error("getUserMedia failed completely:", e2.name, e2.message);
+            setStatus("error", "Camera/Mic blocked — check permissions");
+            throw e2;
+        }
     }
 
     localVideo.srcObject = localStream;
     localVideo.muted = true;
-    await localVideo.play().catch(() => { });
+
+    // Explicitly play — needed on iOS Safari
+    try { await localVideo.play(); } catch (_) { /* OK */ }
+
     return localStream;
+}
+
+// ========== PLAY REMOTE VIDEO (handles autoplay policy) ==========
+async function playRemoteVideo() {
+    try {
+        await remoteVideo.play();
+    } catch (e) {
+        console.warn("Remote autoplay blocked — adding tap-to-play overlay");
+        // On iOS Safari, autoplay with audio requires user gesture.
+        // Show a tap overlay so the user can start playback.
+        let overlay = document.getElementById("tap-overlay");
+        if (!overlay) {
+            overlay = document.createElement("div");
+            overlay.id = "tap-overlay";
+            overlay.style.cssText =
+                "position:absolute;inset:0;z-index:5;display:flex;align-items:center;" +
+                "justify-content:center;background:rgba(0,0,0,0.6);cursor:pointer;";
+            overlay.innerHTML =
+                '<span style="color:#fff;font-size:1.2rem;padding:16px 28px;' +
+                'background:rgba(108,99,255,0.8);border-radius:12px;">Tap to hear audio</span>';
+            overlay.addEventListener("click", async () => {
+                try { await remoteVideo.play(); } catch (_) { /* noop */ }
+                overlay.remove();
+            }, { once: true });
+            document.getElementById("remote-video-wrapper").appendChild(overlay);
+        }
+    }
 }
 
 // ========== CALL HANDLING ==========
@@ -114,17 +143,9 @@ function handleCall(call) {
     currentCall = call;
 
     call.on("stream", async (remoteStream) => {
-        console.log("Remote stream received");
-
+        console.log("Remote stream received, tracks:", remoteStream.getTracks().map(t => t.kind + ":" + t.readyState));
         remoteVideo.srcObject = remoteStream;
-        remoteVideo.setAttribute("playsinline", true);
-
-        try {
-            await remoteVideo.play();
-        } catch (e) {
-            console.log("Autoplay blocked:", e);
-        }
-
+        await playRemoteVideo();
         remoteLabel.textContent = "Connected";
     });
 
@@ -137,19 +158,35 @@ function handleCall(call) {
         showEndedScreen("Call error occurred.");
     });
 
+    // Monitor ICE connection for debugging
     const pc = call.peerConnection;
     if (pc) {
-        pc.oniceconnectionstatechange = () => {
-            console.log("ICE:", pc.iceConnectionState);
+        // Catch late-arriving tracks (important on mobile)
+        pc.ontrack = (event) => {
+            console.log("ontrack event:", event.track.kind);
+            if (event.streams && event.streams[0]) {
+                remoteVideo.srcObject = event.streams[0];
+            } else {
+                // No associated stream — build one
+                let stream = remoteVideo.srcObject;
+                if (!stream || !(stream instanceof MediaStream)) {
+                    stream = new MediaStream();
+                    remoteVideo.srcObject = stream;
+                }
+                stream.addTrack(event.track);
+            }
+            playRemoteVideo();
+            remoteLabel.textContent = "Connected";
+        };
 
-            if (pc.iceConnectionState === "failed") {
+        pc.oniceconnectionstatechange = () => {
+            const state = pc.iceConnectionState;
+            console.log("ICE state:", state);
+            if (state === "failed") {
                 remoteLabel.textContent = "Connection failed";
-            } else if (pc.iceConnectionState === "disconnected") {
-                remoteLabel.textContent = "Reconnecting...";
-            } else if (
-                pc.iceConnectionState === "connected" ||
-                pc.iceConnectionState === "completed"
-            ) {
+            } else if (state === "disconnected") {
+                remoteLabel.textContent = "Reconnecting…";
+            } else if (state === "connected" || state === "completed") {
                 remoteLabel.textContent = "Connected";
             }
         };
@@ -176,8 +213,7 @@ function showEndedScreen(message) {
     remoteVideo.srcObject = null;
     localVideo.srcObject = null;
 
-    endedMessage.textContent =
-        message || "The call has been disconnected.";
+    endedMessage.textContent = message || "The call has been disconnected.";
     showScreen(endedScreen);
 }
 
@@ -189,7 +225,7 @@ function initPeer() {
         isHost = false;
         roomId = urlRoom;
         joinSection.classList.remove("hidden");
-        setStatus("connecting", "Connecting...");
+        setStatus("connecting", "Connecting…");
         peer = new Peer(undefined, { config: ICE_SERVERS });
     } else {
         isHost = true;
@@ -197,30 +233,52 @@ function initPeer() {
         peer = new Peer(roomId, { config: ICE_SERVERS });
     }
 
-    peer.on("open", () => {
+    peer.on("open", (id) => {
+        console.log("Peer open, id:", id);
         if (isHost) {
             shareLinkInput.value = buildShareUrl(roomId);
             shareSection.classList.remove("hidden");
-            setStatus("connected", "Ready — share link");
+            setStatus("connected", "Share the link to start");
         } else {
             setStatus("connected", "Ready to join");
         }
     });
 
+    // Host: answer incoming call
     peer.on("call", async (call) => {
+        console.log("Incoming call");
         try {
             if (!localStream) await getLocalStream();
             call.answer(localStream);
             handleCall(call);
             showScreen(callScreen);
         } catch (err) {
-            console.error(err);
+            console.error("Failed to answer call:", err);
+            setStatus("error", "Failed to start camera");
         }
     });
 
     peer.on("error", (err) => {
-        console.error("Peer error:", err);
-        setStatus("error", err.type || "Connection error");
+        console.error("Peer error:", err.type, err);
+        if (err.type === "peer-unavailable") {
+            setStatus("error", "Room not found — link may have expired");
+        } else if (err.type === "unavailable-id") {
+            setStatus("error", "Room ID taken — retrying…");
+            roomId = generateRoomId();
+            peer.destroy();
+            initPeer();
+        } else {
+            setStatus("error", err.type || "Connection error");
+        }
+    });
+
+    // Auto-reconnect if websocket drops
+    peer.on("disconnected", () => {
+        console.log("Peer disconnected, reconnecting…");
+        setStatus("connecting", "Reconnecting…");
+        if (peer && !peer.destroyed) {
+            peer.reconnect();
+        }
     });
 }
 
@@ -228,30 +286,33 @@ function initPeer() {
 joinBtn.addEventListener("click", async () => {
     try {
         joinBtn.disabled = true;
-        joinBtn.textContent = "Connecting...";
+        joinBtn.textContent = "Connecting…";
 
         await getLocalStream();
 
-        // IMPORTANT FIX: NO CONFIG HERE
         const call = peer.call(roomId, localStream);
+        if (!call) {
+            throw new Error("peer.call returned null — room may not exist");
+        }
 
         handleCall(call);
         showScreen(callScreen);
     } catch (err) {
-        console.error(err);
+        console.error("Join failed:", err);
         joinBtn.disabled = false;
         joinBtn.textContent = "Join Call";
+        setStatus("error", "Failed to join — check permissions");
     }
 });
 
-// ========== ENABLE CAMERA ==========
+// ========== ENABLE CAMERA (user gesture for mobile) ==========
 enableCamBtn.addEventListener("click", async () => {
     try {
         enableCamBtn.disabled = true;
-        enableCamBtn.textContent = "Starting...";
+        enableCamBtn.textContent = "Starting…";
         await getLocalStream();
         enableCamBtn.innerHTML = "✓ Camera Ready";
-        cameraHint.textContent = "Waiting for peer...";
+        cameraHint.textContent = "Camera ready. Waiting for someone to join…";
     } catch (e) {
         enableCamBtn.disabled = false;
         enableCamBtn.textContent = "Retry";
@@ -260,22 +321,35 @@ enableCamBtn.addEventListener("click", async () => {
 
 // ========== COPY LINK ==========
 copyBtn.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(shareLinkInput.value);
+    try {
+        await navigator.clipboard.writeText(shareLinkInput.value);
+    } catch (_) {
+        // Fallback for mobile Safari / insecure contexts
+        shareLinkInput.select();
+        shareLinkInput.setSelectionRange(0, 99999);
+        document.execCommand("copy");
+    }
     copyText.textContent = "Copied!";
-    setTimeout(() => (copyText.textContent = "Copy"), 2000);
+    setTimeout(() => { copyText.textContent = "Copy"; }, 2000);
 });
 
 // ========== CONTROLS ==========
 micBtn.addEventListener("click", () => {
     if (!localStream) return;
     const t = localStream.getAudioTracks()[0];
-    t.enabled = !t.enabled;
+    if (t) {
+        t.enabled = !t.enabled;
+        micBtn.classList.toggle("active", t.enabled);
+    }
 });
 
 camBtn.addEventListener("click", () => {
     if (!localStream) return;
     const t = localStream.getVideoTracks()[0];
-    t.enabled = !t.enabled;
+    if (t) {
+        t.enabled = !t.enabled;
+        camBtn.classList.toggle("active", t.enabled);
+    }
 });
 
 endBtn.addEventListener("click", () => {
@@ -286,8 +360,7 @@ endBtn.addEventListener("click", () => {
 switchCamBtn.addEventListener("click", async () => {
     if (!localStream || !currentCall) return;
 
-    currentFacingMode =
-        currentFacingMode === "user" ? "environment" : "user";
+    currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
 
     try {
         const newStream = await navigator.mediaDevices.getUserMedia({
@@ -303,13 +376,16 @@ switchCamBtn.addEventListener("click", async () => {
         if (sender) await sender.replaceTrack(newTrack);
 
         const old = localStream.getVideoTracks()[0];
-        old.stop();
-        localStream.removeTrack(old);
+        if (old) {
+            old.stop();
+            localStream.removeTrack(old);
+        }
         localStream.addTrack(newTrack);
-
         localVideo.srcObject = localStream;
     } catch (err) {
-        console.error("Switch camera failed", err);
+        console.error("Switch camera failed:", err);
+        // Revert facing mode on failure
+        currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
     }
 });
 
