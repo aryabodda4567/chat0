@@ -1,15 +1,13 @@
 // ========== CONFIGURATION ==========
 // Set this to your production URL where static files are hosted.
 // Leave empty ('') to use the current browser URL (for local/file:// usage).
-// Examples:
-//   const SERVER_URL = 'https://your-app.vercel.app';
-//   const SERVER_URL = 'https://your-app.netlify.app';
-//   const SERVER_URL = 'http://localhost:5500';
 const SERVER_URL = 'https://chat0-ashen.vercel.app/';
 
 // ========== DOM REFERENCES ==========
 const lobby = document.getElementById('lobby');
 const callScreen = document.getElementById('call-screen');
+const endedScreen = document.getElementById('ended-screen');
+const endedMessage = document.getElementById('ended-message');
 const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 const shareSection = document.getElementById('share-section');
@@ -23,8 +21,8 @@ const remoteVideo = document.getElementById('remote-video');
 const remoteLabel = document.getElementById('remote-label');
 const micBtn = document.getElementById('mic-btn');
 const camBtn = document.getElementById('cam-btn');
+const switchCamBtn = document.getElementById('switch-cam-btn');
 const endBtn = document.getElementById('end-btn');
-const upgradeBtn = document.getElementById('upgrade-btn');
 const videosContainer = document.getElementById('videos-container');
 
 // ========== STATE ==========
@@ -33,7 +31,7 @@ let localStream = null;
 let currentCall = null;
 let roomId = null;
 let isHost = false;
-let callMode = 'video'; // 'video' or 'voice'
+let currentFacingMode = 'user'; // 'user' = front, 'environment' = back
 
 // ========== ICE SERVERS (STUN + TURN) ==========
 const ICE_SERVERS = {
@@ -43,7 +41,6 @@ const ICE_SERVERS = {
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
         { urls: 'stun:stun4.l.google.com:19302' },
-        // Free TURN server from Open Relay Project
         {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -84,37 +81,35 @@ function setStatus(type, text) {
     statusText.textContent = text;
 }
 
+function showScreen(screen) {
+    lobby.classList.remove('active');
+    callScreen.classList.remove('active');
+    endedScreen.classList.remove('active');
+    screen.classList.add('active');
+}
+
 // ========== MEDIA ==========
 async function getLocalStream() {
-    const constraints = {
-        audio: true,
-        video: callMode === 'video'
-    };
     try {
-        localStream = await navigator.mediaDevices.getUserMedia(constraints);
+        localStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: currentFacingMode },
+            audio: true
+        });
         localVideo.srcObject = localStream;
-        if (callMode === 'voice') {
-            camBtn.classList.remove('active');
-        }
         return localStream;
     } catch (err) {
-        if (callMode === 'video') {
-            // Fallback to audio only
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-                localVideo.srcObject = localStream;
-                callMode = 'voice';
-                camBtn.classList.remove('active');
-                return localStream;
-            } catch (audioErr) {
-                console.error('Cannot access media devices:', audioErr);
-                setStatus('error', 'Camera/Mic access denied');
-                throw audioErr;
-            }
-        } else {
-            console.error('Cannot access microphone:', err);
-            setStatus('error', 'Microphone access denied');
-            throw err;
+        // Try without facingMode constraint
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true
+            });
+            localVideo.srcObject = localStream;
+            return localStream;
+        } catch (fallbackErr) {
+            console.error('Cannot access camera/microphone:', fallbackErr);
+            setStatus('error', 'Camera/Mic access denied');
+            throw fallbackErr;
         }
     }
 }
@@ -126,17 +121,16 @@ function handleCall(call) {
     call.on('stream', (remoteStream) => {
         remoteVideo.srcObject = remoteStream;
         remoteLabel.textContent = 'Connected';
-        // Force play for autoplay-blocked browsers
         remoteVideo.play().catch(() => { });
     });
 
     call.on('close', () => {
-        endCall(false);
+        showEndedScreen('The other person left the call.');
     });
 
     call.on('error', (err) => {
         console.error('Call error:', err);
-        endCall(false);
+        showEndedScreen('Call error occurred.');
     });
 
     // Monitor the underlying peer connection for late-arriving tracks
@@ -146,7 +140,6 @@ function handleCall(call) {
             if (event.streams && event.streams[0]) {
                 remoteVideo.srcObject = event.streams[0];
             } else {
-                // No stream associated — create one from tracks
                 let stream = remoteVideo.srcObject;
                 if (!stream || !(stream instanceof MediaStream)) {
                     stream = new MediaStream();
@@ -160,8 +153,10 @@ function handleCall(call) {
 
         pc.oniceconnectionstatechange = () => {
             console.log('ICE state:', pc.iceConnectionState);
-            if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
-                remoteLabel.textContent = 'Connection lost…';
+            if (pc.iceConnectionState === 'failed') {
+                remoteLabel.textContent = 'Connection failed…';
+            } else if (pc.iceConnectionState === 'disconnected') {
+                remoteLabel.textContent = 'Reconnecting…';
             } else if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
                 remoteLabel.textContent = 'Connected';
             }
@@ -169,29 +164,8 @@ function handleCall(call) {
     }
 }
 
-function switchToCallScreen() {
-    lobby.classList.remove('active');
-    callScreen.classList.add('active');
-    updateCallScreenMode();
-}
-
-function updateCallScreenMode() {
-    if (callMode === 'voice') {
-        videosContainer.classList.add('voice-only-mode');
-        camBtn.classList.add('hidden');
-        upgradeBtn.classList.remove('hidden');
-        upgradeBtn.classList.remove('downgrade-active');
-        upgradeBtn.title = 'Upgrade to Video';
-    } else {
-        videosContainer.classList.remove('voice-only-mode');
-        camBtn.classList.remove('hidden');
-        upgradeBtn.classList.remove('hidden');
-        upgradeBtn.classList.add('downgrade-active');
-        upgradeBtn.title = 'Switch to Voice Only';
-    }
-}
-
-function endCall(closePeer = true) {
+function showEndedScreen(message) {
+    // Stop all tracks
     if (currentCall) {
         currentCall.close();
         currentCall = null;
@@ -200,24 +174,18 @@ function endCall(closePeer = true) {
         localStream.getTracks().forEach(track => track.stop());
         localStream = null;
     }
-    if (closePeer && peer) {
+    if (peer) {
         peer.destroy();
         peer = null;
     }
 
-    // Reset UI
+    // Reset video elements
     remoteVideo.srcObject = null;
     localVideo.srcObject = null;
-    callScreen.classList.remove('active');
-    lobby.classList.add('active');
-    remoteLabel.textContent = 'Waiting for peer…';
 
-    // Re-initialize
-    micBtn.classList.add('active');
-    camBtn.classList.add('active');
-
-    // Reload to reset state cleanly
-    window.location.href = window.location.pathname;
+    // Show ended screen
+    endedMessage.textContent = message || 'The call has been disconnected.';
+    showScreen(endedScreen);
 }
 
 // ========== PEER INITIALIZATION ==========
@@ -225,20 +193,14 @@ function initPeer() {
     const urlRoom = getRoomIdFromUrl();
 
     if (urlRoom) {
-        // Joiner: connect to the host's peer ID
         isHost = false;
         roomId = urlRoom;
         setStatus('connecting', 'Connecting to call…');
         joinSection.classList.remove('hidden');
-
-        // Create peer with random ID for the joiner
         peer = new Peer(undefined, { config: ICE_SERVERS });
     } else {
-        // Host: create a room
         isHost = true;
         roomId = generateRoomId();
-
-        // Use room ID as peer ID so joiner can find us
         peer = new Peer(roomId, { config: ICE_SERVERS });
     }
 
@@ -249,10 +211,8 @@ function initPeer() {
             shareSection.classList.remove('hidden');
             setStatus('connected', 'Ready — share the link to start');
 
-            // Pre-start local video for host
-            getLocalStream().then(() => {
-                // Show a small preview, then wait for peer
-            }).catch(() => { });
+            // Pre-start local video
+            getLocalStream().then(() => { }).catch(() => { });
         } else {
             setStatus('connected', 'Ready to join');
         }
@@ -261,7 +221,7 @@ function initPeer() {
     // Host: receive incoming call
     peer.on('call', async (call) => {
         try {
-            // Always re-acquire stream to match current callMode selection
+            // Re-acquire stream to ensure it's fresh
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
@@ -269,7 +229,7 @@ function initPeer() {
             await getLocalStream();
             call.answer(localStream);
             handleCall(call);
-            switchToCallScreen();
+            showScreen(callScreen);
         } catch (err) {
             console.error('Failed to answer call:', err);
         }
@@ -280,11 +240,10 @@ function initPeer() {
         if (err.type === 'peer-unavailable') {
             setStatus('error', 'Call not found — link may be expired');
         } else if (err.type === 'unavailable-id') {
-            // Room ID already taken, generate new one
             roomId = generateRoomId();
             peer.destroy();
             peer = new Peer(roomId, { config: ICE_SERVERS });
-            initPeerEvents();
+            initPeer();
         } else {
             setStatus('error', 'Connection error: ' + err.type);
         }
@@ -308,7 +267,7 @@ joinBtn.addEventListener('click', async () => {
 
         const call = peer.call(roomId, localStream, { config: ICE_SERVERS });
         handleCall(call);
-        switchToCallScreen();
+        showScreen(callScreen);
     } catch (err) {
         console.error('Failed to join call:', err);
         joinBtn.disabled = false;
@@ -327,7 +286,6 @@ copyBtn.addEventListener('click', () => {
             copyBtn.style.background = '';
         }, 2000);
     }).catch(() => {
-        // Fallback
         shareLinkInput.select();
         document.execCommand('copy');
         copyText.textContent = 'Copied!';
@@ -355,69 +313,51 @@ camBtn.addEventListener('click', () => {
 });
 
 endBtn.addEventListener('click', () => {
-    endCall(true);
+    showEndedScreen('You ended the call.');
 });
 
-// ========== CALL TYPE PICKER ==========
-document.querySelectorAll('.call-type-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        const parent = btn.closest('.call-type-btns');
-        parent.querySelectorAll('.call-type-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        callMode = btn.dataset.mode;
-    });
-});
+// ========== SWITCH CAMERA ==========
+switchCamBtn.addEventListener('click', async () => {
+    if (!localStream) return;
 
-// ========== UPGRADE / DOWNGRADE VIDEO ==========
-upgradeBtn.addEventListener('click', async () => {
-    if (!localStream || !currentCall) return;
+    // Toggle facing mode
+    currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
 
-    const peerConnection = currentCall.peerConnection;
-    if (!peerConnection) return;
+    try {
+        // Get new video stream with the other camera
+        const newStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: currentFacingMode },
+            audio: false
+        });
 
-    if (callMode === 'voice') {
-        // Upgrade to video
-        try {
-            const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
-            const videoTrack = videoStream.getVideoTracks()[0];
-            localStream.addTrack(videoTrack);
-            localVideo.srcObject = localStream;
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        const oldVideoTrack = localStream.getVideoTracks()[0];
 
-            // Add or replace video track in the peer connection
-            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+        // Replace the track in the peer connection
+        if (currentCall && currentCall.peerConnection) {
+            const sender = currentCall.peerConnection
+                .getSenders()
+                .find(s => s.track && s.track.kind === 'video');
             if (sender) {
-                await sender.replaceTrack(videoTrack);
-            } else {
-                peerConnection.addTrack(videoTrack, localStream);
-            }
-
-            callMode = 'video';
-            camBtn.classList.add('active');
-            updateCallScreenMode();
-        } catch (err) {
-            console.error('Failed to upgrade to video:', err);
-        }
-    } else {
-        // Downgrade to voice
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) {
-            videoTrack.stop();
-            localStream.removeTrack(videoTrack);
-
-            // Remove video track from peer connection
-            const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender) {
-                try {
-                    await sender.replaceTrack(null);
-                } catch {
-                    peerConnection.removeTrack(sender);
-                }
+                await sender.replaceTrack(newVideoTrack);
             }
         }
 
-        callMode = 'voice';
-        camBtn.classList.remove('active');
-        updateCallScreenMode();
+        // Replace the track in the local stream
+        if (oldVideoTrack) {
+            oldVideoTrack.stop();
+            localStream.removeTrack(oldVideoTrack);
+        }
+        localStream.addTrack(newVideoTrack);
+        localVideo.srcObject = localStream;
+
+        // Animate the button
+        switchCamBtn.style.transform = 'scale(1.15) rotate(180deg)';
+        setTimeout(() => { switchCamBtn.style.transform = ''; }, 300);
+    } catch (err) {
+        console.error('Failed to switch camera:', err);
+        // Revert facing mode
+        currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
     }
 });
 
