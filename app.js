@@ -393,34 +393,65 @@ endBtn.addEventListener("click", () => {
 
 // ========== SWITCH CAMERA ==========
 switchCamBtn.addEventListener("click", async () => {
-    if (!localStream || !currentCall) return;
+    if (!localStream) return;
 
-    currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
+    const newMode = currentFacingMode === "user" ? "environment" : "user";
+    console.log("Switching camera to:", newMode);
 
     try {
-        const newStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: currentFacingMode },
-            audio: false
-        });
-
-        const newTrack = newStream.getVideoTracks()[0];
-        const sender = currentCall.peerConnection
-            .getSenders()
-            .find(s => s.track && s.track.kind === "video");
-
-        if (sender) await sender.replaceTrack(newTrack);
-
-        const old = localStream.getVideoTracks()[0];
-        if (old) {
-            old.stop();
-            localStream.removeTrack(old);
+        // 1. Find and stop old track (CRITICAL for mobile: release hardware lock)
+        const oldTrack = localStream.getVideoTracks()[0];
+        if (oldTrack) {
+            oldTrack.stop();
+            localStream.removeTrack(oldTrack);
         }
+
+        // 2. Acquire new stream
+        const newStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: newMode } // No audio needed, existing audio track persists
+        });
+        const newTrack = newStream.getVideoTracks()[0];
+
+        // 3. Update local stream
         localStream.addTrack(newTrack);
         localVideo.srcObject = localStream;
+        // Ensure local video plays (iOS)
+        try { await localVideo.play(); } catch (_) { }
+
+        // 4. Update remote peer connection
+        if (currentCall && currentCall.peerConnection) {
+            const sender = currentCall.peerConnection
+                .getSenders()
+                .find(s => s.track && s.track.kind === "video");
+
+            if (sender) {
+                await sender.replaceTrack(newTrack);
+            }
+        }
+
+        // 5. Update state
+        currentFacingMode = newMode;
+
     } catch (err) {
         console.error("Switch camera failed:", err);
-        // Revert facing mode on failure
-        currentFacingMode = currentFacingMode === "user" ? "environment" : "user";
+        // Recovery: try to restore any video source
+        try {
+            console.log("Attempting to recover user camera...");
+            const recoveryStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const recoveryTrack = recoveryStream.getVideoTracks()[0];
+            localStream.addTrack(recoveryTrack);
+            localVideo.srcObject = localStream;
+
+            if (currentCall) {
+                const sender = currentCall.peerConnection.getSenders().find(s => s.track.kind === "video");
+                if (sender) sender.replaceTrack(recoveryTrack);
+            }
+            // Reset state to whatever we got (likely 'user')
+            currentFacingMode = "user";
+        } catch (recErr) {
+            console.error("Camera recovery failed:", recErr);
+            setStatus("error", "Camera blocked or unavailable");
+        }
     }
 });
 
